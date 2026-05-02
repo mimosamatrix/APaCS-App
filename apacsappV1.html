@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>TrafficMap Control</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root {
+  --bg: #0e1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --accent: #f0a500;
+  --accent2: #3fb950;
+  --danger: #f85149;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --mono: 'Courier New', monospace;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+html { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  /* Android fix: use dvh, fallback to 100% on html */
+  height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+  padding-top: var(--safe-top);
+  height: calc(52px + var(--safe-top));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  z-index: 1000;
+  min-width: 0;
+}
+.logo {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 600; font-size: 14px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.logo svg { width: 22px; height: 36px; flex-shrink: 0; }
+.logo-text { display: none; }
+@media (min-width: 460px) { .logo-text { display: inline; } }
+.spacer { flex: 1; min-width: 4px; }
+.bt-status { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.bt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); transition: background 0.3s; }
+.bt-dot.on { background: var(--accent2); }
+.bt-name { font-size: 11px; color: var(--muted); display: none; }
+@media (min-width: 560px) { .bt-name { display: inline; } }
+.btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); padding: 6px 11px; border-radius: 6px;
+  font-size: 13px; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; gap: 5px;
+  white-space: nowrap; flex-shrink: 0;
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+  transition: opacity 0.15s;
+}
+.btn:active { opacity: 0.7; }
+.btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.btn.green { border-color: var(--accent2); color: var(--accent2); }
+.btn.green.on { background: rgba(63,185,80,0.15); }
+
+/* ── Main area ── */
+#main {
+  flex: 1;
+  display: flex;
+  min-height: 0; /* CRITICAL — prevents flex children overflowing on Android */
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Map wrapper — explicit inset so Android knows the size ── */
+#map-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+#map {
+  /* Absolute fill — the only reliable way on Android WebView */
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+}
+#map.crosshair { cursor: crosshair; }
+
+/* ── Floating action buttons on the map ── */
+.fab {
+  position: absolute; right: 10px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--muted);
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  transition: opacity 0.15s;
+  z-index: 800;
+}
+.fab:active { opacity: 0.7; }
+.fab.on { border-color: #4285f4; color: #4285f4; background: rgba(66,133,244,0.12); }
+#fab-follow { bottom: 116px; }
+#fab-sheet  { bottom: 62px; display: none; } /* shown on mobile */
+
+/* ── Location pill ── */
+#loc-bar {
+  position: absolute; bottom: 8px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 20px; padding: 5px 14px;
+  display: flex; align-items: center; gap: 8px;
+  z-index: 800; font-size: 11px;
+  pointer-events: none; opacity: 0;
+  transition: opacity 0.3s;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  max-width: calc(100% - 70px);
+}
+#loc-bar.on { opacity: 1; }
+.ldot { width: 7px; height: 7px; border-radius: 50%; background: #4285f4; flex-shrink: 0; }
+#loc-coords { font-family: var(--mono); color: var(--text); }
+#loc-acc { color: var(--muted); }
+
+/* ── Desktop sidebar ── */
+#sidebar {
+  width: 296px; flex-shrink: 0;
+  background: var(--panel); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: width 0.28s cubic-bezier(.4,0,.2,1);
+  position: relative;
+}
+#sidebar.collapsed { width: 0; border-left-width: 0; }
+#sidebar.collapsed .sb-inner { opacity: 0; pointer-events: none; }
+.sb-inner { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 296px; transition: opacity 0.15s; }
+
+/* Toggle tab — sits on the left edge of sidebar */
+#sb-toggle {
+  position: absolute; left: -32px; top: 50%;
+  transform: translateY(-50%);
+  width: 32px; height: 56px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--muted);
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+  z-index: 10;
+  box-shadow: -2px 0 8px rgba(0,0,0,0.3);
+  transition: color 0.15s;
+}
+#sb-toggle:hover { color: var(--text); }
+#sb-toggle svg { transition: transform 0.28s; }
+#sidebar.collapsed #sb-toggle { left: -32px; border-right: 1px solid var(--border); border-radius: 8px; box-shadow: -2px 0 8px rgba(0,0,0,0.3); }
+#sidebar.collapsed #sb-toggle svg { transform: scaleX(-1); }
+
+@media (max-width: 767px) {
+  #sidebar { display: none; }
+  #fab-sheet { display: flex; }
+}
+
+.sb-sec { border-bottom: 1px solid var(--border); padding: 12px 16px; }
+.sb-title { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 8px; font-weight: 600; }
+.log-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 12px 16px; }
+#log-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 3px; }
+
+/* ── Mobile bottom sheet ── */
+#bsheet-wrap {
+  display: none;
+  position: absolute; bottom: 0; left: 0; right: 0;
+  z-index: 850; pointer-events: none;
+}
+@media (max-width: 767px) { #bsheet-wrap { display: block; } }
+#bsheet {
+  background: var(--panel); border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  pointer-events: all;
+  transform: translateY(calc(100% - 52px));
+  transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+  max-height: 78vh;
+  display: flex; flex-direction: column;
+  padding-bottom: var(--safe-bottom);
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.6);
+  will-change: transform;
+}
+#bsheet.open { transform: translateY(0); }
+.sheet-drag {
+  display: flex; align-items: center; justify-content: center;
+  padding: 10px 0 4px; flex-shrink: 0;
+  cursor: pointer; touch-action: none;
+}
+.sheet-drag-handle { width: 38px; height: 4px; background: var(--border); border-radius: 2px; }
+.sheet-tabs-row {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 16px 10px; flex-shrink: 0;
+}
+.stab {
+  padding: 5px 12px; border-radius: 6px; font-size: 12px;
+  cursor: pointer; color: var(--muted);
+  touch-action: manipulation; -webkit-user-select: none; user-select: none;
+}
+.stab.on { background: #21262d; color: var(--text); font-weight: 600; }
+.sheet-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 16px 12px; }
+
+/* ── Shared card/list components ── */
+.sel-card {
+  background: #21262d; border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; display: flex; align-items: center; gap: 10px;
+}
+.sel-card .cn { min-width: 0; }
+.sel-card .cn-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.sel-card .cn-id { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.sel-card .cn-coords { font-size: 10px; color: var(--muted); font-family: var(--mono); margin-top: 1px; }
+.no-sel { color: var(--muted); font-size: 13px; text-align: center; padding: 10px 0; }
+.act-row { display: flex; gap: 6px; margin-top: 8px; }
+.act-row .btn { flex: 1; justify-content: center; padding: 9px 6px; font-size: 13px; }
+.lrow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 6px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  touch-action: manipulation;
+}
+.lrow:active, .lrow.on { background: #21262d; }
+.lrow.on { border-left: 2px solid var(--accent); padding-left: 4px; }
+.lrow-id { font-family: var(--mono); color: var(--accent); font-size: 11px; font-weight: 600; flex-shrink: 0; }
+.lrow-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrow-dist { font-family: var(--mono); font-size: 10px; color: var(--muted); flex-shrink: 0; }
+.sg { display: grid; gap: 8px; }
+.sg label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 3px; }
+.sg input {
+  width: 100%; background: #21262d; border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px; color: var(--text);
+  font-family: var(--mono); font-size: 11px;
+}
+.lentry {
+  background: #21262d; border-radius: 6px; padding: 6px 10px;
+  display: flex; align-items: center; gap: 7px; font-size: 12px;
+  flex-shrink: 0; animation: slin .2s ease;
+}
+@keyframes slin { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+.lt { color:var(--muted); font-family:var(--mono); font-size:10px; flex-shrink:0; }
+.lid { font-family:var(--mono); color:var(--accent); font-weight:600; flex-shrink:0; }
+.lmsg { color:var(--muted); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lbadge { font-size:10px; padding:2px 5px; border-radius:4px; flex-shrink:0; }
+.lbadge.ok { background:rgba(63,185,80,.15); color:var(--accent2); }
+.lbadge.err { background:rgba(248,81,73,.15); color:var(--danger); }
+.lbadge.sim { background:rgba(240,165,0,.15); color:var(--accent); }
+.empty-log { color:var(--muted); font-size:12px; text-align:center; padding:1.5rem 0; }
+.llist { max-height: 180px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* ── Modal ── */
+.moverlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.75); z-index: 9000;
+  align-items: flex-end; justify-content: center;
+  padding-bottom: var(--safe-bottom);
+}
+.moverlay.on { display: flex; }
+@media (min-width: 500px) { .moverlay { align-items: center; } }
+.modal {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 16px 16px 0 0; padding: 20px 18px;
+  width: 100%; max-width: 420px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+@media (min-width: 500px) { .modal { border-radius: 12px; } }
+.modal h3 { font-size: 15px; font-weight: 600; }
+.modal p { font-size: 13px; color: var(--muted); }
+.modal label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+.modal input {
+  width: 100%; background: #21262d; border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px; color: var(--text);
+  font-size: 14px; font-family: inherit;
+}
+.modal input:focus { outline: none; border-color: var(--accent); }
+.modal input.err { border-color: var(--danger); }
+.coord-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mrow { display: flex; gap: 8px; }
+.mrow .btn { flex: 1; justify-content: center; padding: 10px; font-size: 14px; }
+
+/* ── Toast ── */
+#toast {
+  position: fixed; bottom: calc(1rem + var(--safe-bottom)); left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: #21262d; border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 18px; font-size: 13px;
+  z-index: 9999; transition: transform .25s ease;
+  pointer-events: none; white-space: nowrap;
+  max-width: calc(100vw - 2rem); overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 0 4px 16px rgba(0,0,0,.5);
+}
+#toast.on { transform: translateX(-50%) translateY(0); }
+#toast.ok { border-color: var(--accent2); color: var(--accent2); }
+#toast.err { border-color: var(--danger); color: var(--danger); }
+
+/* ── Location dot ── */
+.ldouter {
+  width:20px; height:20px; border-radius:50%;
+  background:rgba(66,133,244,.2);
+  display:flex; align-items:center; justify-content:center;
+  animation:lp 2s ease-in-out infinite;
+}
+.ldinner { width:12px; height:12px; border-radius:50%; background:#4285f4; border:2px solid #fff; box-shadow:0 0 6px rgba(66,133,244,.8); }
+@keyframes lp { 0%,100%{transform:scale(1);opacity:1;} 50%{transform:scale(1.4);opacity:.6;} }
+.lacc-circle { border:1.5px solid rgba(66,133,244,.4); background:rgba(66,133,244,.07); border-radius:50%; }
+
+/* Leaflet dark */
+.leaflet-popup-content-wrapper { background:var(--panel)!important; color:var(--text)!important; border:1px solid var(--border)!important; border-radius:8px!important; box-shadow:0 4px 20px rgba(0,0,0,.5)!important; }
+.leaflet-popup-tip { background:var(--panel)!important; }
+.leaflet-popup-content { margin:10px 14px!important; }
+.leaflet-control-zoom a { background:var(--panel)!important; color:var(--text)!important; border-color:var(--border)!important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 22 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1" y="1" width="20" height="34" rx="3" fill="#21262d" stroke="#444c56" stroke-width="1.5"/>
+      <circle cx="11" cy="8"  r="4" fill="#f85149"/>
+      <circle cx="11" cy="18" r="4" fill="#f0a500"/>
+      <circle cx="11" cy="28" r="4" fill="#3fb950"/>
+      <line x1="11" y1="35" x2="11" y2="40" stroke="#444c56" stroke-width="2"/>
+    </svg>
+    <span class="logo-text">TrafficMap Control</span>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn green" id="add-btn" onclick="toggleAddMode()">+ Map</button>
+  <button class="btn" id="coords-btn" onclick="openCoordsModal()" style="border-color:var(--accent);color:var(--accent)">+ Coords</button>
+  <div class="bt-status">
+    <div class="bt-dot" id="bt-dot"></div>
+    <span class="bt-name" id="bt-name">No BT</span>
+  </div>
+  <button class="btn primary" id="bt-btn" onclick="handleBT()">BT</button>
+</header>
+
+<div id="main">
+
+  <!-- Map -->
+  <div id="map-wrap">
+    <div id="map"></div>
+
+    <div class="fab" id="fab-follow" onclick="toggleFollow()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+        <circle cx="12" cy="12" r="8" stroke-dasharray="4 2"/>
+      </svg>
+    </div>
+
+    <div class="fab" id="fab-sheet" onclick="toggleSheet()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
+    </div>
+
+    <div id="loc-bar">
+      <div class="ldot"></div>
+      <span style="color:var(--muted);font-size:11px">Location:</span>
+      <span id="loc-coords">—</span>
+      <span id="loc-acc"></span>
+    </div>
+
+    <!-- Mobile bottom sheet -->
+    <div id="bsheet-wrap">
+      <div id="bsheet">
+        <div class="sheet-drag" id="sheet-drag-handle">
+          <div class="sheet-drag-handle"></div>
+        </div>
+        <div class="sheet-tabs-row">
+          <div class="stab on" onclick="switchTab('sel')">Selected</div>
+          <div class="stab" onclick="switchTab('list')">Lights</div>
+          <div class="stab" onclick="switchTab('log')">Log</div>
+        </div>
+        <div class="sheet-body" id="sheet-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Desktop sidebar -->
+  <div id="sidebar">
+    <!-- Toggle tab -->
+    <div id="sb-toggle" onclick="toggleSidebar()" title="Toggle panel">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <path d="M15 18l-6-6 6-6"/>
+      </svg>
+    </div>
+
+    <div class="sb-inner">
+      <div class="sb-sec">
+        <div class="sb-title">Selected Light</div>
+        <div id="desk-sel"><div class="no-sel">Tap a traffic light on the map</div></div>
+      </div>
+      <div class="sb-sec">
+        <div class="sb-title">All Lights (<span id="desk-count">0</span>)</div>
+        <div class="llist" id="desk-list"></div>
+      </div>
+      <div class="sb-sec">
+        <div class="sb-title">BLE Config</div>
+        <div class="sg">
+          <div><label>Service UUID</label><input id="svc-uuid" value="12345678-1234-5678-1234-56789abcdef0"></div>
+          <div><label>Characteristic UUID</label><input id="char-uuid" value="87654321-4321-8765-4321-abcdef012345"></div>
+        </div>
+      </div>
+      <div class="log-wrap">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span class="sb-title" style="margin:0">Signal Log</span>
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="clearLog()">Clear</button>
+        </div>
+        <div id="log-list"><div class="empty-log" id="empty-log">No signals sent yet</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Add light modal -->
+<div class="moverlay" id="add-modal">
+  <div class="modal">
+    <h3>Add Traffic Light</h3>
+    <p id="modal-desc">Configure the new light. Edit coordinates if needed.</p>
+    <div><label>Name / Location</label><input id="new-name" placeholder="e.g. Intersection A - North"></div>
+    <div><label>Light ID</label><input id="new-id" placeholder="TL-001"></div>
+    <div class="coord-row">
+      <div><label>Latitude</label><input id="new-lat" placeholder="17.42310" inputmode="decimal" oninput="onCoordInput()"></div>
+      <div><label>Longitude</label><input id="new-lng" placeholder="78.44880" inputmode="decimal" oninput="onCoordInput()"></div>
+    </div>
+    <div id="coord-preview" style="font-size:11px;color:var(--muted);font-family:var(--mono);min-height:14px"></div>
+    <div class="mrow">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="confirmAdd()">Add Light</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── Map ───────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [17.3850, 78.4867], zoom: 13,
+  tap: true, tapTolerance: 15,  // iOS/Android touch fix
+  bounceAtZoomLimits: false
+});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap &copy; CARTO',
+  maxZoom: 20, subdomains: 'abcd'
+}).addTo(map);
+
+// ── State ─────────────────────────────────────────────────────────
+let lights = [], markers = {}, selectedLight = null;
+let btDevice = null, btChar = null;
+let addMode = false, pendingLL = null, lightCounter = 0;
+let sheetOpen = false, currentTab = 'sel';
+let locMarker = null, accCircle = null;
+let watchLo = null, watchHi = null;
+let followMode = false, userPos = null, tracking = false;
+
+// ── Icons ─────────────────────────────────────────────────────────
+function tlSVG(sel) {
+  var bg = sel ? '#f0a500' : '#1c2128', bd = sel ? '#f0a500' : '#444c56';
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="46" viewBox="0 0 28 46">' +
+    '<rect x="2" y="1" width="24" height="38" rx="4" fill="' + bg + '" stroke="' + bd + '" stroke-width="2"/>' +
+    '<circle cx="14" cy="10" r="5" fill="#f85149"/>' +
+    '<circle cx="14" cy="20" r="5" fill="#f0a500" opacity="' + (sel ? '0.3' : '0.5') + '"/>' +
+    '<circle cx="14" cy="30" r="5" fill="#3fb950"/>' +
+    '<line x1="14" y1="39" x2="14" y2="46" stroke="#444c56" stroke-width="2.5"/></svg>';
+}
+function mkIcon(sel) {
+  return L.divIcon({ html: tlSVG(sel), className: '', iconSize: [28, 46], iconAnchor: [14, 46] });
+}
+
+// ── Lights ────────────────────────────────────────────────────────
+var INIT = [
+  { id:'TL-001', name:'Punjagutta Junction',  lat:17.4241, lng:78.4488 },
+  { id:'TL-002', name:'Begumpet Flyover',      lat:17.4408, lng:78.4620 },
+  { id:'TL-003', name:'Nampally Station Rd',   lat:17.3893, lng:78.4700 },
+  { id:'TL-004', name:'Paradise Circle',        lat:17.4486, lng:78.4988 },
+  { id:'TL-005', name:'Mehdipatnam Jn.',        lat:17.3923, lng:78.4394 },
+  { id:'TL-006', name:'Tolichowki Signal',      lat:17.3987, lng:78.4169 },
+  { id:'TL-007', name:'Madhapur Tech City',     lat:17.4519, lng:78.3913 },
+];
+
+function addLight(l) {
+  var m = L.marker([l.lat, l.lng], { icon: mkIcon(false) }).addTo(map);
+  m.on('click', function() { selectLight(l); openSheet('sel'); });
+  markers[l.id] = m;
+  lights.push(l);
+  var n = parseInt(l.id.replace('TL-','')) || 0;
+  if (n > lightCounter) lightCounter = n;
+  renderAll();
+}
+
+function selectLight(l) {
+  if (selectedLight) markers[selectedLight.id].setIcon(mkIcon(false));
+  selectedLight = l;
+  markers[l.id].setIcon(mkIcon(true));
+  renderAll();
+}
+
+function delLight(id) {
+  if (!confirm('Remove light ' + id + '?')) return;
+  var idx = lights.findIndex(function(l){ return l.id === id; });
+  if (idx < 0) return;
+  map.removeLayer(markers[id]); delete markers[id];
+  lights.splice(idx, 1);
+  if (selectedLight && selectedLight.id === id) selectedLight = null;
+  renderAll();
+  toast('Removed ' + id);
+}
+
+function panTo(id) {
+  var l = lights.find(function(x){ return x.id === id; });
+  if (!l) return;
+  map.panTo([l.lat, l.lng], { animate: true });
+  selectLight(l);
+}
+
+// ── Render ────────────────────────────────────────────────────────
+function renderAll() {
+  renderDesk();
+  if (sheetOpen || currentTab) renderSheetBody();
+}
+
+function selCardHTML(l) {
+  if (!l) return '<div class="no-sel">Tap a traffic light on the map</div>';
+  return '<div class="sel-card">' +
+    '<div style="flex-shrink:0">' + tlSVG(true) + '</div>' +
+    '<div class="cn">' +
+      '<div class="cn-name">' + l.name + '</div>' +
+      '<div class="cn-id">' + l.id + '</div>' +
+      '<div class="cn-coords">' + l.lat.toFixed(5) + ', ' + l.lng.toFixed(5) + '</div>' +
+    '</div></div>' +
+    '<div class="act-row">' +
+      '<button class="btn primary" onclick="sendSig()">&#9654; Send ' + l.id + '</button>' +
+      '<button class="btn danger" onclick="delLight(\'' + l.id + '\')">Remove</button>' +
+    '</div>';
+}
+
+function lrowHTML(l) {
+  var dist = '';
+  if (userPos) {
+    var d = haversine(userPos.lat, userPos.lng, l.lat, l.lng);
+    dist = d >= 1000 ? (d/1000).toFixed(1)+'km' : Math.round(d)+'m';
+  }
+  var on = selectedLight && selectedLight.id === l.id ? ' on' : '';
+  return '<div class="lrow' + on + '" onclick="panTo(\'' + l.id + '\')">' +
+    '<span class="lrow-id">' + l.id + '</span>' +
+    '<span class="lrow-name">' + l.name + '</span>' +
+    '<span class="lrow-dist">' + dist + '</span></div>';
+}
+
+function renderDesk() {
+  var ds = document.getElementById('desk-sel');
+  if (ds) ds.innerHTML = selCardHTML(selectedLight);
+  var dl = document.getElementById('desk-list');
+  if (dl) dl.innerHTML = lights.map(lrowHTML).join('');
+  var dc = document.getElementById('desk-count');
+  if (dc) dc.textContent = lights.length;
+}
+
+function renderSheetBody() {
+  var sb = document.getElementById('sheet-body');
+  if (!sb) return;
+  if (currentTab === 'sel') {
+    sb.innerHTML = selCardHTML(selectedLight);
+  } else if (currentTab === 'list') {
+    sb.innerHTML = '<div style="margin-bottom:6px;font-size:11px;color:var(--muted)">' + lights.length + ' lights</div>' +
+      lights.map(lrowHTML).join('');
+  } else {
+    var entries = document.querySelectorAll('#log-list .lentry');
+    sb.innerHTML = entries.length
+      ? Array.from(entries).map(function(e){ return e.outerHTML; }).join('')
+      : '<div class="empty-log">No signals sent yet</div>';
+  }
+}
+
+// ── Sheet ─────────────────────────────────────────────────────────
+function toggleSheet() {
+  sheetOpen = !sheetOpen;
+  document.getElementById('bsheet').classList.toggle('open', sheetOpen);
+  if (sheetOpen) renderSheetBody();
+}
+function openSheet(tab) {
+  switchTab(tab);
+  sheetOpen = true;
+  document.getElementById('bsheet').classList.add('open');
+}
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.stab').forEach(function(t) {
+    var map2 = { sel:'selected', list:'lights', log:'log' };
+    t.classList.toggle('on', t.textContent.toLowerCase() === (map2[tab] || tab));
+  });
+  renderSheetBody();
+}
+
+// Swipe-down to close
+var touchY0 = 0;
+var drag = document.getElementById('sheet-drag-handle');
+drag.addEventListener('touchstart', function(e){ touchY0 = e.touches[0].clientY; }, { passive: true });
+drag.addEventListener('touchend', function(e){
+  if (e.changedTouches[0].clientY - touchY0 > 50) {
+    sheetOpen = false;
+    document.getElementById('bsheet').classList.remove('open');
+  }
+}, { passive: true });
+
+// ── Sidebar toggle ────────────────────────────────────────────────
+var sidebarOpen = true;
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
+  // Leaflet needs to know the map changed size after the CSS transition finishes
+  setTimeout(function() { map.invalidateSize(true); }, 300);
+}
+
+// ── Add light ─────────────────────────────────────────────────────
+function toggleAddMode() {
+  addMode = !addMode;
+  document.getElementById('add-btn').classList.toggle('on', addMode);
+  document.getElementById('map').classList.toggle('crosshair', addMode);
+  toast(addMode ? 'Tap the map to place a traffic light' : 'Add mode off');
+}
+
+map.on('click', function(e) {
+  if (!addMode) return;
+  pendingLL = e.latlng;
+  lightCounter++;
+  document.getElementById('new-id').value = 'TL-' + String(lightCounter).padStart(3,'0');
+  document.getElementById('new-name').value = '';
+  document.getElementById('new-lat').value = e.latlng.lat.toFixed(6);
+  document.getElementById('new-lng').value = e.latlng.lng.toFixed(6);
+  document.getElementById('coord-preview').textContent = '';
+  document.getElementById('modal-desc').textContent = 'Placed at tapped location. Edit coordinates or name if needed.';
+  clearCoordErrors();
+  document.getElementById('add-modal').classList.add('on');
+  addMode = false;
+  document.getElementById('add-btn').classList.remove('on');
+  document.getElementById('map').classList.remove('crosshair');
+});
+
+function openCoordsModal() {
+  lightCounter++;
+  document.getElementById('new-id').value = 'TL-' + String(lightCounter).padStart(3,'0');
+  document.getElementById('new-name').value = '';
+  document.getElementById('new-lat').value = '';
+  document.getElementById('new-lng').value = '';
+  document.getElementById('coord-preview').textContent = 'Enter latitude and longitude above';
+  document.getElementById('modal-desc').textContent = 'Enter the exact coordinates of the traffic light.';
+  clearCoordErrors();
+  pendingLL = null;
+  document.getElementById('add-modal').classList.add('on');
+  setTimeout(function(){ document.getElementById('new-lat').focus(); }, 100);
+}
+
+function onCoordInput() {
+  var lat = parseFloat(document.getElementById('new-lat').value);
+  var lng = parseFloat(document.getElementById('new-lng').value);
+  var prev = document.getElementById('coord-preview');
+  if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+    prev.textContent = Math.abs(lat).toFixed(5) + '\u00b0' + (lat>=0?'N':'S') + '  ' +
+      Math.abs(lng).toFixed(5) + '\u00b0' + (lng>=0?'E':'W');
+    prev.style.color = 'var(--accent2)';
+    clearCoordErrors();
+  } else {
+    prev.textContent = (isNaN(lat) || isNaN(lng)) ? 'Enter both coordinates' : 'Coordinates out of range';
+    prev.style.color = 'var(--muted)';
+  }
+}
+
+function clearCoordErrors() {
+  document.getElementById('new-lat').classList.remove('err');
+  document.getElementById('new-lng').classList.remove('err');
+}
+
+function closeModal() {
+  document.getElementById('add-modal').classList.remove('on');
+  pendingLL = null;
+}
+
+function confirmAdd() {
+  var name = document.getElementById('new-name').value.trim() || 'Unnamed Light';
+  var id = document.getElementById('new-id').value.trim();
+  var lat = parseFloat(document.getElementById('new-lat').value);
+  var lng = parseFloat(document.getElementById('new-lng').value);
+
+  // Validate ID
+  if (!id) { toast('Please enter a light ID', 'err'); return; }
+  if (lights.find(function(l){ return l.id === id; })) { toast('ID already exists', 'err'); return; }
+
+  // Validate coords
+  var latOk = !isNaN(lat) && lat >= -90 && lat <= 90;
+  var lngOk = !isNaN(lng) && lng >= -180 && lng <= 180;
+  document.getElementById('new-lat').classList.toggle('err', !latOk);
+  document.getElementById('new-lng').classList.toggle('err', !lngOk);
+  if (!latOk || !lngOk) {
+    toast('Enter valid latitude and longitude', 'err');
+    return;
+  }
+
+  var l = { id: id, name: name, lat: lat, lng: lng };
+  addLight(l);
+  closeModal();
+  selectLight(l);
+  map.setView([lat, lng], Math.max(map.getZoom(), 15), { animate: true });
+  toast('Added ' + id, 'ok');
+}
+
+// ── Signal ────────────────────────────────────────────────────────
+async function sendSig() {
+  if (!selectedLight) return;
+  var id = selectedLight.id;
+  if (btChar) {
+    try {
+      await btChar.writeValue(new TextEncoder().encode(id));
+      addLog(id, 'Sent via BLE', 'ok');
+      toast('Sent "' + id + '" to ESP32', 'ok');
+    } catch(e) {
+      addLog(id, 'BLE error: ' + e.message, 'err');
+      toast('BLE write failed', 'err');
+    }
+  } else {
+    addLog(id, 'Simulated (not connected)', 'sim');
+    toast('Simulated: ' + id, 'ok');
+  }
+}
+
+// ── Bluetooth ─────────────────────────────────────────────────────
+async function handleBT() {
+  if (btDevice && btDevice.gatt.connected) {
+    btDevice.gatt.disconnect();
+    btDevice = null; btChar = null;
+    setBTUI(false); addLog('—','Disconnected','err'); return;
+  }
+  if (!navigator.bluetooth) {
+    toast('Web Bluetooth needs Chrome on Android','err');
+    addLog('—','Web Bluetooth unavailable','err'); return;
+  }
+  var svc = document.getElementById('svc-uuid').value.trim().toLowerCase();
+  var chr = document.getElementById('char-uuid').value.trim().toLowerCase();
+  try {
+    toast('Scanning for ESP32…');
+    btDevice = await navigator.bluetooth.requestDevice({ filters:[{services:[svc]}], optionalServices:[svc] });
+    btDevice.addEventListener('gattserverdisconnected', function(){
+      btDevice=null; btChar=null; setBTUI(false); addLog('—','ESP32 disconnected','err');
+    });
+    var server = await btDevice.gatt.connect();
+    var service = await server.getPrimaryService(svc);
+    btChar = await service.getCharacteristic(chr);
+    setBTUI(true, btDevice.name || 'ESP32');
+    addLog('—', 'Connected to ' + (btDevice.name||'ESP32'), 'ok');
+    toast('Connected to ' + (btDevice.name||'ESP32'), 'ok');
+  } catch(e) {
+    btDevice=null; btChar=null;
+    if (e.name !== 'NotFoundError') { addLog('—','Error: '+e.message,'err'); toast('BT error: '+e.message,'err'); }
+  }
+}
+function setBTUI(on, name) {
+  document.getElementById('bt-dot').className = 'bt-dot' + (on?' on':'');
+  document.getElementById('bt-name').textContent = on ? (name||'Connected') : 'No BT';
+  document.getElementById('bt-btn').textContent = on ? 'Disc.' : 'BT';
+  document.getElementById('bt-btn').className = 'btn ' + (on ? 'danger' : 'primary');
+}
+
+// ── Log ───────────────────────────────────────────────────────────
+function addLog(id, msg, status) {
+  var list = document.getElementById('log-list');
+  var empty = document.getElementById('empty-log');
+  if (empty) empty.remove();
+  var now = new Date().toTimeString().slice(0,8);
+  var el = document.createElement('div');
+  el.className = 'lentry';
+  el.innerHTML = '<span class="lt">'+now+'</span><span class="lid">'+id+'</span>' +
+    '<span class="lmsg">'+msg+'</span>' +
+    '<span class="lbadge '+status+'">'+(status==='ok'?'SENT':status==='err'?'ERR':'SIM')+'</span>';
+  list.insertBefore(el, list.firstChild);
+  if (list.children.length > 50) list.lastChild.remove();
+  if (currentTab === 'log') renderSheetBody();
+}
+function clearLog() {
+  document.getElementById('log-list').innerHTML = '<div class="empty-log" id="empty-log">No signals sent yet</div>';
+  if (currentTab === 'log') renderSheetBody();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────
+var toastTimer = null;
+function toast(msg, type) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'on' + (type ? ' '+type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ el.className = ''; }, 2800);
+}
+
+// ── Location ──────────────────────────────────────────────────────
+function startTracking() {
+  if (!navigator.geolocation) { toast('Geolocation unavailable','err'); return; }
+  if (tracking) return;
+  tracking = true;
+  // Low-accuracy first — fast, works on WiFi/cell, no GPS required
+  watchLo = navigator.geolocation.watchPosition(
+    onPos, onPosErr,
+    { enableHighAccuracy: false, timeout: 20000, maximumAge: 15000 }
+  );
+}
+
+function upgradeGPS() {
+  if (watchHi !== null) return;
+  // Layer GPS on top silently — errors ignored so low-acc keeps working
+  watchHi = navigator.geolocation.watchPosition(
+    onPos, function(){},
+    { enableHighAccuracy: true, timeout: 60000, maximumAge: 4000 }
+  );
+}
+
+function onPos(pos) {
+  var lat = pos.coords.latitude;
+  var lng = pos.coords.longitude;
+  var acc = pos.coords.accuracy;
+  // Ignore a fix that's much worse than what we have
+  if (userPos && acc > userPos.accuracy * 2.5 && acc > 200) return;
+  userPos = { lat: lat, lng: lng, accuracy: acc };
+
+  var dotHTML = '<div class="ldouter"><div class="ldinner"></div></div>';
+  var icon = L.divIcon({ html: dotHTML, className: '', iconSize: [20,20], iconAnchor: [10,10] });
+
+  if (!locMarker) {
+    locMarker = L.marker([lat,lng], { icon: icon, zIndexOffset: 1000, interactive: false }).addTo(map);
+    accCircle = L.circle([lat,lng], {
+      radius: acc, className: 'lacc-circle', interactive: false, weight: 1.5
+    }).addTo(map);
+    map.setView([lat,lng], 15);
+    followMode = true;
+    document.getElementById('fab-follow').classList.add('on');
+    upgradeGPS();
+  } else {
+    locMarker.setLatLng([lat,lng]);
+    accCircle.setLatLng([lat,lng]);
+    accCircle.setRadius(acc);
+  }
+  if (followMode) map.panTo([lat,lng], { animate: true, duration: 0.5 });
+
+  // Update location bar
+  var lb = document.getElementById('loc-bar');
+  lb.classList.add('on');
+  document.getElementById('loc-coords').textContent =
+    Math.abs(lat).toFixed(5) + '\u00b0' + (lat>=0?'N':'S') + '  ' +
+    Math.abs(lng).toFixed(5) + '\u00b0' + (lng>=0?'E':'W');
+  document.getElementById('loc-acc').textContent = '\u00b1' + Math.round(acc) + 'm';
+
+  // Refresh distances in lists
+  renderDesk();
+  renderSheetBody();
+
+  // Proximity alerts
+  var now = Date.now();
+  lights.forEach(function(light) {
+    var d = haversine(lat, lng, light.lat, light.lng);
+    var key = '_p' + light.id;
+    if (d < 50 && (!light[key] || now - light[key] > 30000)) {
+      light[key] = now;
+      toast('Near ' + light.name + ' \u2014 ' + Math.round(d) + 'm', 'ok');
+    }
+  });
+}
+
+function onPosErr(err) {
+  tracking = false;
+  if (watchLo !== null) { navigator.geolocation.clearWatch(watchLo); watchLo = null; }
+  var msg = { 1:'Location permission denied', 2:'Position unavailable', 3:'Timed out \u2014 tap \u2295 to retry' };
+  toast(msg[err.code] || 'Location error', 'err');
+}
+
+function toggleFollow() {
+  if (!tracking || watchLo === null) {
+    if (watchLo !== null) navigator.geolocation.clearWatch(watchLo);
+    if (watchHi !== null) navigator.geolocation.clearWatch(watchHi);
+    watchLo = null; watchHi = null; tracking = false;
+    toast('Requesting location\u2026');
+    startTracking();
+    return;
+  }
+  if (!userPos) { toast('Acquiring location\u2026'); return; }
+  followMode = !followMode;
+  document.getElementById('fab-follow').classList.toggle('on', followMode);
+  if (followMode) map.setView([userPos.lat, userPos.lng], Math.max(map.getZoom(), 15), { animate: true });
+}
+
+map.on('dragstart', function() {
+  if (followMode) {
+    followMode = false;
+    document.getElementById('fab-follow').classList.remove('on');
+  }
+});
+
+function haversine(lat1, lng1, lat2, lng2) {
+  var R = 6371000;
+  var dLat = (lat2-lat1) * Math.PI / 180;
+  var dLng = (lng2-lng1) * Math.PI / 180;
+  var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+    Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+    Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ── Boot ──────────────────────────────────────────────────────────
+INIT.forEach(addLight);
+startTracking();
+
+// Android WebView Leaflet fix: force a size recalculation after layout settles
+setTimeout(function() { map.invalidateSize(true); }, 100);
+setTimeout(function() { map.invalidateSize(true); }, 600);
+</script>
+</body>
+</html>
